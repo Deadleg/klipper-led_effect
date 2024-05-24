@@ -14,6 +14,7 @@ ANALOG_SAMPLE_COUNT = 5
 ANALOG_REPORT_TIME  = 0.05
 
 COLORS = 4
+EMPTY_COLORS = [0.0] * COLORS
 
 ######################################################################
 # Custom color value list, returns lists of [r, g ,b] values
@@ -106,7 +107,7 @@ class ledFrameHandler:
         for effect in self.effects:
             if not effect.runOnShutown:
                 for chain in self.ledChains:
-                    chain.led_helper.set_color(None, (0.0, 0.0, 0.0, 0.0))
+                    chain.led_helper.set_color(None, EMPTY_COLORS)
                     chain.led_helper.update_func(chain.led_helper.led_state, None)
 
         pass
@@ -192,25 +193,22 @@ class ledFrameHandler:
         return eventtime + 1
 
     def _getColorData(self, colors, fade):
-        clamp = (lambda x : 0.0 if x < 0.0 else 1.0 if x > 1.0 else x)
-        colors = [x*clamp(fade) for x in colors]
-        colors=colors + [0.0] * (4 - len(colors))
-        colors=colors[:4]
-        colors = [clamp(x) for x in colors]
-        return tuple(colors)
+        colors = [colors[0]*fade,colors[1]*fade,colors[2]*fade,colors[3]*fade]
+        return colors
 
     def _getFrames(self, eventtime):
         chainsToUpdate = set()
+        ledsToUpdate = set()
 
         frames = [(effect, effect.getFrame(eventtime)) for effect in self.effects]
 
         #first set all LEDs to 0, that should be updated
-        for effect, (frame, update) in frames:
-            if update:
-                for i in range(effect.ledCount):
-                    chain,index=effect.leds[i]
-                    chain.led_helper.led_state[index] = (0.0, 0.0, 0.0, 0.0)
-                    chainsToUpdate.add(chain)
+        #for effect, (frame, update) in frames:
+        #    if update:
+        #        for i in range(effect.ledCount):
+        #            chain,index=effect.leds[i]
+        #            chain.led_helper.led_state[index] = (0.0, 0.0, 0.0, 0.0)
+        #            chainsToUpdate.add(chain)
 
         #then sum up all effects for that LEDs
         for effect, (frame, update) in frames:
@@ -218,15 +216,27 @@ class ledFrameHandler:
                 for i in range(effect.ledCount):
                     chain,index=effect.leds[i]
                     
-                    current_state=list(chain.led_helper.led_state[index])
+                    if (chain, index) in ledsToUpdate:
+                        current_state=chain.led_helper.led_state[index]
+                    else:
+                        current_state = [0.0, 0.0, 0.0, 0.0] #EMPTY_COLORS
+                    
                     effect_state=self._getColorData(frame[i*COLORS:i*COLORS+COLORS], 
                                                     effect.fadeValue)
-
-                    next_state=[min(1.0,a+b) for a,b in \
-                                 zip(current_state, effect_state)]
-
-                    chain.led_helper.led_state[index] = tuple(next_state)
+ 
+                    #next_state=[min(1.0,a+b) for a,b in \
+                    #             zip(current_state, effect_state)]
+                    next_state=[
+                            min(1.0,current_state[0] + effect_state[0]),
+                            min(1.0,current_state[1] + effect_state[1]),
+                            min(1.0,current_state[2] + effect_state[2]),
+                            min(1.0,current_state[3] + effect_state[3]),
+                            ]
+ 
+                    chain.led_helper.led_state[index] = next_state
                     chainsToUpdate.add(chain)
+                    ledsToUpdate.add((chain,index))
+
 
         for chain in chainsToUpdate:
             if hasattr(chain,"prev_data"):
@@ -401,7 +411,8 @@ class ledEffect:
                         self.leds.append((ledChain, led))
 
         self.ledCount = len(self.leds)
-        self.frame = [0.0] * COLORS * self.ledCount
+        self.emptyFrame   = [0.0] * COLORS * self.ledCount
+        self.frame = self.emptyFrame
 
         #enumerate all effects from the subclasses of _layerBase...
         self.availableLayers = {str(c).rpartition('.layer')[2]\
@@ -471,22 +482,25 @@ class ledEffect:
             if self.nextEventTime < self.handler.reactor.NEVER:
                 # Effect has just been disabled. Set colors to 0 and update once.
                 self.nextEventTime = self.handler.reactor.NEVER
-                self.frame = [0.0] * COLORS * self.ledCount
+                frame = self.emptyFrame
+                self.frame = self.emptyFrame
+
                 update = True
             else:
+                frame = self.frame
                 update = False
         else:
             update = True
             if eventtime >= self.nextEventTime:
                 self.nextEventTime = eventtime + self.frameRate
 
-                self.frame = [0.0] * COLORS * self.ledCount
+                frame = self.emptyFrame
                 for layer in self.layers:
                     layerFrame = layer.nextFrame(eventtime)
 
                     if layerFrame:
                         blend = self.blendingModes[layer.blendingMode]
-                        self.frame = [blend(t, b) for t, b in zip(layerFrame, self.frame)]
+                        frame = [blend(t, b) for t, b in zip(layerFrame, frame)]
 
                 if (self.fadeEndTime > eventtime) and (self.fadeTime > 0.0):
                     remainingFade = ((self.fadeEndTime - eventtime) / self.fadeTime)
@@ -494,8 +508,10 @@ class ledEffect:
                     remainingFade = 0.0    
 
                 self.fadeValue = 1.0-remainingFade if self.enabled else remainingFade
+            else:
+                frame = self.frame
 
-        return self.frame, update
+        return frame, update
 
     def set_enabled(self, state):
         if self.enabled != state:
