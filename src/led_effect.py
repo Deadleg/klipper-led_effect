@@ -217,6 +217,7 @@ class ledFrameHandler:
 
         for effect, (frame, update) in frames:
             fadeValue = effect.fadeValue
+
             for i in range(effect.ledCount):
                 chain,index=effect.leds[i]
 
@@ -717,7 +718,7 @@ class ledEffect:
                 brightness.append(v)
 
             for c in range(0, len(self.paletteColors)):
-                color = self.paletteColors[c]
+                color = list(self.paletteColors[c])
 
                 for b in brightness:
                     self.thisFrame += [[b * i for i in color] * self.ledCount]
