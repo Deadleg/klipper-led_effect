@@ -8,6 +8,7 @@
 
 from math import cos, exp, pi
 from random import randint
+from memory_profiler import profile
 
 ANALOG_SAMPLE_TIME  = 0.001
 ANALOG_SAMPLE_COUNT = 5
@@ -202,6 +203,7 @@ class ledFrameHandler:
     def _getColorData(self, colors, fade):
         return colors
 
+    @profile
     def _getFrames(self, eventtime):
         # Store results in local variable to prevent overhead of attribute lookups
         states = {}
@@ -218,6 +220,9 @@ class ledFrameHandler:
         for effect, (frame, update) in frames:
             fadeValue = effect.fadeValue
 
+            if fadeValue == 0:
+                continue
+
             for i in range(effect.ledCount):
                 chain,index=effect.leds[i]
 
@@ -227,10 +232,6 @@ class ledFrameHandler:
 
                 if colors == EMPTY_COLORS:
                     continue
-
-                if fadeValue == 0:
-                    # Break after updating the color so we don't skip disables.
-                    break
 
                 try:
                     current_state[0]+=colors[0]*fadeValue
@@ -243,10 +244,10 @@ class ledFrameHandler:
                     print(colors)
         
         for (chain, index), led in states.items():
-            led[0] = min(1.0, led[0])
-            led[1] = min(1.0, led[1])
-            led[2] = min(1.0, led[2])
-            led[3] = min(1.0, led[3])
+            led[0] = max(min(1.0, led[0]), 0.0)
+            led[1] = max(min(1.0, led[1]), 0.0)
+            led[2] = max(min(1.0, led[2]), 0.0)
+            led[3] = max(min(1.0, led[3]), 0.0)
             chain.led_helper.led_state[index] = led
 
         for chain in chainsToUpdate:
