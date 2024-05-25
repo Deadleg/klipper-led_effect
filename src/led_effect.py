@@ -1185,7 +1185,7 @@ class ledEffect:
 
             for i in range(101):
                 x = int((i / 101.0) * self.ledCount)
-                self.thisFrame.append(frames[x])
+                self.thisFrame.append(list(frames[x]))
 
             self.frameCount = len(self.thisFrame)
 
