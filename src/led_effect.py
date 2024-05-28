@@ -9,6 +9,8 @@
 from math import cos, exp, pi
 from random import randint
 from memory_profiler import profile
+from typing import List
+import numpy as np
 
 ANALOG_SAMPLE_TIME  = 0.001
 ANALOG_SAMPLE_COUNT = 5
@@ -203,7 +205,6 @@ class ledFrameHandler:
     def _getColorData(self, colors, fade):
         return colors
 
-    @profile
     def _getFrames(self, eventtime):
         # Store results in local variable to prevent overhead of attribute lookups
         states = {}
@@ -430,7 +431,7 @@ class ledEffect:
                         self.leds.append((ledChain, led))
 
         self.ledCount = len(self.leds)
-        self.emptyFrame = EMPTY_COLORS * self.ledCount
+        self.emptyFrame: np.array = np.array(EMPTY_COLORS * self.ledCount)
         self.frame = self.emptyFrame
 
         #enumerate all effects from the subclasses of _layerBase...
@@ -601,7 +602,8 @@ class ledEffect:
             self.handler         = kwargs['handler']
             self.frameHandler    = kwargs['frameHandler']
             self.ledCount        = kwargs['ledCount']
-            self.paletteColors   = colorArray(COLORS, kwargs['paletteColors'])
+            #self.paletteColors   = colorArray(COLORS, kwargs['paletteColors'])
+            self.paletteColors   = kwargs['paletteColors']
             self.effectRate      = kwargs['effectRate']
             self.effectCutoff    = kwargs['effectCutoff']
             self.frameRate       = kwargs['frameRate']
@@ -611,6 +613,7 @@ class ledEffect:
             self._frameCount      = 1
             self.lastAnalog      = 0
             self.emptyFrame = colorArray(COLORS, EMPTY_COLORS * self.ledCount)
+            self.frames = np.array()
 
         @property
         def frameCount(self):
@@ -628,9 +631,9 @@ class ledEffect:
             self.lastFrameTime = eventtime
             return self.thisFrame[frameNumber]
 
-        def _decayTable(self, factor=1, rate=1):
+        def _decayTable(self, factor=1, rate=1) -> np.array:
 
-            frame = []
+            frame = np.array([])
 
             p = (1.0 / self.frameRate)
             r = (p/15.0)*factor
@@ -643,12 +646,14 @@ class ledEffect:
                         frame.append(b)
             return frame
 
-        def _gradient(self, palette, steps, reverse=False, toFirst=False):
-            palette = colorArray(COLORS, palette[:])
-            if reverse: palette.reverse()
+        def _gradient(self, palette: List[float], steps, reverse=False, toFirst=False) -> np.array:
+            #palette = colorArray(COLORS, palette[:])
+            palette = np.array(palette).reshape((-1, 4))
+            if reverse: 
+                palette = np.flip(palette, axis=0)
 
             if len(palette) == 1:
-                return colorArray(COLORS, palette * steps)
+                return np.repeat(palette, steps, axis=0)
 
             if toFirst:
                 palette += palette[0]
@@ -830,11 +835,11 @@ class ledEffect:
 
             if self.effectCutoff <= 0: self.effectCutoff = .1
 
-            decayTable = self._decayTable(factor=len(self.paletteColors) * \
+            # 1d array
+            decayTable: np.array = self._decayTable(factor=len(self.paletteColors) * \
                                             self.effectCutoff, rate=1)
 
-            gradient   = self.paletteColors[0] + \
-                self._gradient(self.paletteColors[1:], len(decayTable)+1)
+            gradient = self.paletteColors[0] + self._gradient(self.paletteColors[1:], len(decayTable)+1)
 
             decayTable = [c for b in zip(decayTable, decayTable, decayTable, decayTable) \
                 for c in b]
