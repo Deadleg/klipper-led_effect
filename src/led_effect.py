@@ -8,16 +8,16 @@
 
 from math import cos, exp, pi
 from random import randint
-from memory_profiler import profile
-from typing import List
+from typing import List, Optional
 import numpy as np
+import numpy.typing as npt
 
 ANALOG_SAMPLE_TIME  = 0.001
 ANALOG_SAMPLE_COUNT = 5
 ANALOG_REPORT_TIME  = 0.05
 
 COLORS = 4
-EMPTY_COLORS = [0.0] * COLORS
+EMPTY_COLORS = np.array([0.0] * COLORS, np.float16)
 
 ######################################################################
 # Custom color value list, returns lists of [r, g ,b] values
@@ -207,49 +207,67 @@ class ledFrameHandler:
 
     def _getFrames(self, eventtime):
         # Store results in local variable to prevent overhead of attribute lookups
-        states = {}
-
         frames = [(effect, effect.getFrame(eventtime)) for effect in self.effects if not effect.lastUpdateApplied]
+
+        total_leds = sum([chain.led_helper.get_led_count() for chain in self.ledChains])
+        chain_indexes = {}
+        next = 0
+        for chain in self.ledChains:
+            chain_indexes[chain] = (next, next + chain.led_helper.get_led_count())
+            next = chain.led_helper.get_led_count() + next
+
+        chain_state = np.array([], np.float16)
+        for effect, (frame, update) in frames:
+            fade_value = effect.fadeValue
+            frame_arr = np.zeros((total_leds, 4))
+            for i in range(effect.ledCount):
+                chain,index=effect.leds[i]
+                frame_arr[chain_indexes[chain]+index] = frame[i] * fade_value
+            chain_state = np.append(chain_state, frame_arr, axis=1)
+
+
+        chain_state = np.clip(chain_state, 0.0, 1.0)
+
         chainsToUpdate = set()
 
         for effect, (frame, update) in frames:
-            for i in range(effect.ledCount):
-                chain, index = effect.leds[i]
-                states[(chain, index)] = [0.0, 0.0, 0.0, 0.0]
+            for chain in effect.ledChains:
                 chainsToUpdate.add(chain)
 
-        for effect, (frame, update) in frames:
-            fadeValue = effect.fadeValue
+        #for effect, (frame, update) in frames:
+        #    fadeValue = effect.fadeValue
 
-            if fadeValue == 0:
-                continue
+        #    if fadeValue == 0:
+        #        continue
 
-            for i in range(effect.ledCount):
-                chain,index=effect.leds[i]
+        #    for i in range(effect.ledCount):
+        #        chain,index=effect.leds[i]
 
-                current_state=states[(chain, index)]
-                
-                colors = frame[i*COLORS:i*COLORS+COLORS]
+        #        current_state=states[(chain, index)]
+        #        
+        #        colors = frame[i*COLORS:i*COLORS+COLORS]
 
-                if colors == EMPTY_COLORS:
-                    continue
+        #        if colors == EMPTY_COLORS:
+        #            continue
 
-                try:
-                    current_state[0]+=colors[0]*fadeValue
-                    current_state[1]+=colors[1]*fadeValue
-                    current_state[2]+=colors[2]*fadeValue
-                    current_state[3]+=colors[3]*fadeValue
-                except:
-                    print(effect.name)
-                    print(current_state)
-                    print(colors)
+        #        try:
+        #            current_state[0]+=colors[0]*fadeValue
+        #            current_state[1]+=colors[1]*fadeValue
+        #            current_state[2]+=colors[2]*fadeValue
+        #            current_state[3]+=colors[3]*fadeValue
+        #        except:
+        #            print(effect.name)
+        #            print(current_state)
+        #            print(colors)
         
-        for (chain, index), led in states.items():
-            led[0] = max(min(1.0, led[0]), 0.0)
-            led[1] = max(min(1.0, led[1]), 0.0)
-            led[2] = max(min(1.0, led[2]), 0.0)
-            led[3] = max(min(1.0, led[3]), 0.0)
-            chain.led_helper.led_state[index] = led
+        for chain, (start, end) in chain_indexes.keys():
+            chain.led_helper.led_state = chain_state[start:end]
+        #for (chain, index), led in :
+        #    led[0] = max(min(1.0, led[0]), 0.0)
+        #    led[1] = max(min(1.0, led[1]), 0.0)
+        #    led[2] = max(min(1.0, led[2]), 0.0)
+        #    led[3] = max(min(1.0, led[3]), 0.0)
+        #    chain.led_helper.led_state[index] = led
 
         for chain in chainsToUpdate:
             if hasattr(chain,"prev_data"):
@@ -431,7 +449,7 @@ class ledEffect:
                         self.leds.append((ledChain, led))
 
         self.ledCount = len(self.leds)
-        self.emptyFrame: np.array = np.array(EMPTY_COLORS * self.ledCount)
+        self.emptyFrame = np.array(EMPTY_COLORS * self.ledCount)
         self.frame = self.emptyFrame
 
         #enumerate all effects from the subclasses of _layerBase...
@@ -498,7 +516,13 @@ class ledEffect:
 
         self.handler.addEffect(self)
 
-    def getFrame(self, eventtime):
+    def getFrame(self, eventtime) -> tuple[npt.NDArray[np.float16], bool]:
+        """
+        Returns
+        -------
+        npt.NDArray[np.float16]
+            Shape (self.ledCount, 4)
+        """
         if not self.enabled and self.fadeValue <= 0.0:
             if self.nextEventTime < self.handler.reactor.NEVER: #TODO
                 # Effect has just been disabled. Set colors to 0 and update once.
@@ -514,15 +538,15 @@ class ledEffect:
         else:
             if eventtime >= self.nextEventTime:
                 update = True
-                self.nextEventTime = eventtime + self.frameRate # TODO
+                self.nextEventTime = eventtime + self.frameRate
 
-                frame = self.emptyFrame
-                for layer in self.layers: # TODO
-                    layerFrame = layer.nextFrame(eventtime)
+                frame: npt.NDArray[np.float16] = np.zeros((self.ledCount, 4), dtype=np.float16)
 
-                    if layerFrame:
-                        for i in range(len(frame)):
-                            frame[i] = layer.blendingMode(layerFrame[i], frame[i])
+                for layer in self.layers:
+                    maybeFrame = layer.nextFrame(eventtime)
+                    if maybeFrame is not None:
+                        f = layer.blendingMode
+                        frame = f(maybeFrame, frame)
 
                 if (self.fadeEndTime > eventtime) and (self.fadeTime > 0.0):
                     remainingFade = ((self.fadeEndTime - eventtime) / self.fadeTime)
@@ -603,17 +627,17 @@ class ledEffect:
             self.frameHandler    = kwargs['frameHandler']
             self.ledCount        = kwargs['ledCount']
             #self.paletteColors   = colorArray(COLORS, kwargs['paletteColors'])
-            self.paletteColors   = kwargs['paletteColors']
+            self.paletteColors   = np.array(kwargs['paletteColors'], dtype=np.float16).reshape((-1, 4))
             self.effectRate      = kwargs['effectRate']
-            self.effectCutoff    = kwargs['effectCutoff']
+            self.effectCutoff: float    = kwargs['effectCutoff']
             self.frameRate       = kwargs['frameRate']
             self.blendingMode    = kwargs['blendingMode']
             self.frameNumber     = 0
             self.thisFrame       = []
             self._frameCount      = 1
             self.lastAnalog      = 0
-            self.emptyFrame = colorArray(COLORS, EMPTY_COLORS * self.ledCount)
-            self.frames = np.array()
+            self.emptyFrame = np.zeros((self.ledCount, 4), dtype=np.float16)
+            self.frames: npt.NDArray[np.float16] = np.array([], dtype=np.float16).reshape((-1, self.ledCount, 4))
 
         @property
         def frameCount(self):
@@ -625,30 +649,49 @@ class ledEffect:
             if not frameCount:
                 self.thisFrame = [self.emptyFrame]
 
-        def nextFrame(self, eventtime):
+        def nextFrame(self, eventtime) -> Optional[npt.NDArray[np.float16]]:
+            """
+            Returns
+            -------
+            npt.NDArray[np.float16]
+                Array of LED colours. Shape (self.ledCount, 4).
+            """
             frameNumber = (self.frameNumber + 1) % self.frameCount
             self.frameNumber = frameNumber
             self.lastFrameTime = eventtime
-            return self.thisFrame[frameNumber]
 
-        def _decayTable(self, factor=1, rate=1) -> np.array:
+            if frameNumber >= len(self.frames):
+                return self.emptyFrame
+            return self.frames[frameNumber]
 
-            frame = np.array([])
+        def _decayTable(self, factor=1.0, rate=1.0) -> npt.NDArray[np.float16]:
+
+            frame = np.array([], dtype = np.float16)
 
             p = (1.0 / self.frameRate)
             r = (p/15.0)*factor
 
             for s in range(0, int((rate<1)+rate)):
-                frame.append(1.0)
+                frame = np.append(frame, 1.0)
                 for x in range(2, int(p / rate)):
                     b = exp(1)**-(x/r)
                     if b>.004:
-                        frame.append(b)
+                        frame = np.append(frame, b)
             return frame
 
-        def _gradient(self, palette: List[float], steps, reverse=False, toFirst=False) -> np.array:
+        def _gradient(self, palette: npt.NDArray[np.float16], steps, reverse=False, toFirst=False) -> npt.NDArray[np.float16]:
+            """
+            Parameters
+            ----------
+            palette
+                Array of LED colors defined the `[led_effect]`. Shape (-1, 4).
+
+            Returns
+            -------
+            npt.NDArray[np.float16]
+                Array of LED colours. Shape (-1, 4).
+            """
             #palette = colorArray(COLORS, palette[:])
-            palette = np.array(palette).reshape((-1, 4))
             if reverse: 
                 palette = np.flip(palette, axis=0)
 
@@ -665,19 +708,19 @@ class ledEffect:
             else:
                 intervals_per_step = 0
 
-            gradient=palette[0]
+            gradient: npt.NDArray = np.array([palette[0]], dtype=np.float16)
 
-            for i in range(1,steps):
+            for i in range(1, steps):
                 j = intervals_per_step * i
                 k = int(j) 
                 r = j-k
                 k = min(k, len(palette)-1)
 
                 if ( (k+1) >= len(palette) ) | (r == 0.0) :
-                    z = palette[k]
+                    z = [palette[k]]
                 else:
-                    z = [((1-r)*palette[k][m] + r*palette[k+1][m]) for m in range(COLORS)]
-                gradient += z
+                    z = [[((1-r)*palette[k][m] + r*palette[k+1][m]) for m in range(COLORS)]]
+                gradient = np.append(gradient, z, axis=0)
             return gradient
 
     #Individual effects inherit from the LED Effect Base class
@@ -706,7 +749,6 @@ class ledEffect:
             brightness = []
 
             p = (1 / self.frameRate) * (self.effectRate * 0.5)
-            o = int(p)
             f = 2 * pi
 
             for x in range(0, int(p)):
@@ -833,36 +875,41 @@ class ledEffect:
                 self.direction = False
                 self.effectRate *= -1
 
-            if self.effectCutoff <= 0: self.effectCutoff = .1
+            if self.effectCutoff <= 0: 
+                self.effectCutoff = .1
 
             # 1d array
-            decayTable: np.array = self._decayTable(factor=len(self.paletteColors) * \
-                                            self.effectCutoff, rate=1)
+            decayTable = self._decayTable(factor=len(self.paletteColors) * self.effectCutoff, rate=1)
 
-            gradient = self.paletteColors[0] + self._gradient(self.paletteColors[1:], len(decayTable)+1)
+            gradient = self.paletteColors[0] + self._gradient(self.paletteColors[1:], len(decayTable))
 
-            decayTable = [c for b in zip(decayTable, decayTable, decayTable, decayTable) \
-                for c in b]
+            #[c for b in zip(decayTable, decayTable, decayTable, decayTable) \
+                #for c in b]
 
-            comet = colorArray(COLORS, [a * b for a, b in zip(gradient,decayTable)])
+            comet = decayTable.reshape((1, -1)).transpose() * gradient
 
-            comet.padRight(EMPTY_COLORS, self.ledCount - len(comet))
+            # pad to match effect LED length
+            comet = np.append(comet, np.repeat(EMPTY_COLORS.reshape((1, 4)), self.ledCount - len(comet), axis=0), axis=0)
 
-            if self.direction: comet.reverse()
-            else: comet.shift(self.ledCount - len(comet))
+            if self.direction: 
+                comet = np.flip(comet, axis=0)
+            else: 
+                comet = np.array(comet[:self.ledCount - len(comet)] + comet[self.ledCount - len(comet):])
 
+            shift = int(self.effectRate+(self.effectRate < 1)) * (1 if self.direction else -1)
             if self.effectRate == 0:
-                self.thisFrame.append(list(comet[0:self.ledCount]))
+                self.frames = np.append(self.frames,comet[0:self.ledCount])
             else:                           
                 for i in range(len(comet)):
-                    comet.shift(int(self.effectRate+(self.effectRate < 1)), 
-                                self.direction)
-                    self.thisFrame.append(list(comet[:self.ledCount]))
+                    comet = np.append(comet[-(i + shift):], comet[:-(i + shift)], axis=0)
+                    #comet.shift(int(self.effectRate+(self.effectRate < 1)), 
+                    #            self.direction)
+                    self.frames = np.append(self.frames,[comet], axis=0)
 
                     for x in range(int((1/self.effectRate)-(self.effectRate <= 1))):
-                        self.thisFrame.append(list(comet[:self.ledCount]))
+                        self.frames = np.append(self.frames, [comet], axis=0)
 
-            self.frameCount = len(self.thisFrame)
+            self.frameCount = len(self.frames)
 
     #Lights move sequentially with decay
     class layerChase(_layerBase):
@@ -917,19 +964,19 @@ class ledEffect:
                 gradientLength = self.ledCount
             else:
                 gradientLength=abs(int(1/(self.effectRate * self.frameRate)))
-            gradient = colorArray(COLORS, self._gradient(self.paletteColors, 
+            gradient = self._gradient(self.paletteColors, 
                                                   gradientLength,
-                                                  toFirst=True))
+                                                  toFirst=True)
 
             for i in range(gradientLength if self.effectRate != 0 else 1):
-                frame = colorArray(COLORS, ([0.0]*COLORS) * self.ledCount)
+                frame = np.zeros((self.ledCount, 4), np.float16)
                 for led in range(self.ledCount):
                     frame[led] = gradient[ int(i*direction + \
                         self.effectCutoff * gradientLength * led \
                         / self.ledCount ) % gradientLength]
-                self.thisFrame.append(list(frame))
+                self.frames = np.append(self.frames, [frame], axis=0)
 
-            self.frameCount = len(self.thisFrame)
+            self.frameCount = len(self.frames)
 
     class layerPattern(_layerBase):
         def __init__(self,  **kwargs):

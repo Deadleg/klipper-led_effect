@@ -271,9 +271,9 @@ class Simulator( simgui.SimFrame ):
             self.setLedCount( led_count )
             for led_index in range(led_count):
                 self.setLeds(led_index, 
-                    int(255.0*ledframe[led_index * 4]),
-                    int(255.0*ledframe[led_index * 4 + 1]),
-                    int(255.0*ledframe[led_index * 4 + 2]))
+                    int(255.0*ledframe[led_index][0]),
+                    int(255.0*ledframe[led_index][1]),
+                    int(255.0*ledframe[led_index][2]))
 
     def setLedCount(self, count):
         self.led_count = count
