@@ -210,32 +210,31 @@ class ledFrameHandler:
         frames = [(effect, effect.getFrame(eventtime)) for effect in self.effects if not effect.lastUpdateApplied]
 
         total_leds = sum([chain.led_helper.get_led_count() for chain in self.ledChains])
+        chainsToUpdate = set()
         chain_indexes = {}
-        next = 0
-        for chain in self.ledChains:
-            chain_indexes[chain] = (next, next + chain.led_helper.get_led_count())
-            next = chain.led_helper.get_led_count() + next
+        total_length = 0
 
-        chain_state = np.array([], np.float16)
         for effect, (frame, update) in frames:
-            fade_value = effect.fadeValue
-            frame_arr = np.zeros((total_leds, 4))
             for i in range(effect.ledCount):
                 chain,index=effect.leds[i]
                 if chain not in chain_indexes:
-                    chain_indexes[chain] = (next, next + chain.led_helper.get_led_count())
-                    next = chain.led_helper.get_led_count() + next
-                frame_arr[chain_indexes[chain][0]+index] = frame[i] * fade_value
-            chain_state = np.append(chain_state, frame_arr, axis=1)
+                    chain_indexes[chain] = (total_length, total_length + chain.led_helper.get_led_count())
+                    total_length = chain.led_helper.get_led_count() + total_length
+                    chainsToUpdate.add(chain)
+
+        chain_state = np.zeros((total_length, 4), np.float16)
+        for effect, (frame, update) in frames:
+            if update:
+                fade_value = effect.fadeValue
+                frame_arr = np.zeros((total_length, 4))
+                for i in range(effect.ledCount):
+                    chain,index=effect.leds[i]
+                    frame_arr[chain_indexes[chain][0]+index] = frame[i] * fade_value
+                chain_state = chain_state + frame_arr
 
 
         chain_state = np.clip(chain_state, 0.0, 1.0)
 
-        chainsToUpdate = set()
-
-        for effect, (frame, update) in frames:
-            for chain in effect.ledChains:
-                chainsToUpdate.add(chain)
 
         #for effect, (frame, update) in frames:
         #    fadeValue = effect.fadeValue
@@ -263,8 +262,8 @@ class ledFrameHandler:
         #            print(current_state)
         #            print(colors)
         
-        for chain, (start, end) in chain_indexes.keys():
-            chain.led_helper.led_state = chain_state[start:end]
+        for chain, (start, end) in chain_indexes.items():
+            chain.led_helper.led_state = chain_state[start:end].tolist()
         #for (chain, index), led in :
         #    led[0] = max(min(1.0, led[0]), 0.0)
         #    led[1] = max(min(1.0, led[1]), 0.0)
@@ -452,7 +451,7 @@ class ledEffect:
                         self.leds.append((ledChain, led))
 
         self.ledCount = len(self.leds)
-        self.emptyFrame = np.array(EMPTY_COLORS * self.ledCount)
+        self.emptyFrame = np.zeros((self.ledCount,4))
         self.frame = self.emptyFrame
 
         #enumerate all effects from the subclasses of _layerBase...
@@ -557,7 +556,7 @@ class ledEffect:
                     remainingFade = 0.0    
 
                 self.fadeValue = 1.0-remainingFade if self.enabled else remainingFade
-                self.frame = frame
+                self.frame = frame.copy()
             else:
                 update = True
                 frame = self.frame
@@ -663,8 +662,6 @@ class ledEffect:
             self.frameNumber = frameNumber
             self.lastFrameTime = eventtime
 
-            if frameNumber >= len(self.frames):
-                return self.emptyFrame
             return self.frames[frameNumber]
 
         def _decayTable(self, factor=1.0, rate=1.0) -> npt.NDArray[np.float16]:
@@ -904,7 +901,7 @@ class ledEffect:
                 self.frames = np.append(self.frames,comet[0:self.ledCount])
             else:                           
                 for i in range(len(comet)):
-                    comet = np.append(comet[-(i + shift):], comet[:-(i + shift)], axis=0)
+                    comet = np.roll(comet, shift, axis=0)
                     #comet.shift(int(self.effectRate+(self.effectRate < 1)), 
                     #            self.direction)
                     self.frames = np.append(self.frames,[comet], axis=0)
