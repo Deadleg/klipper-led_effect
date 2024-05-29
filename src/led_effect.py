@@ -222,6 +222,9 @@ class ledFrameHandler:
             frame_arr = np.zeros((total_leds, 4))
             for i in range(effect.ledCount):
                 chain,index=effect.leds[i]
+                if chain not in chain_indexes:
+                    chain_indexes[chain] = (next, next + chain.led_helper.get_led_count())
+                    next = chain.led_helper.get_led_count() + next
                 frame_arr[chain_indexes[chain]+index] = frame[i] * fade_value
             chain_state = np.append(chain_state, frame_arr, axis=1)
 
