@@ -223,16 +223,19 @@ class ledFrameHandler:
                     chainsToUpdate.add(chain)
 
         chain_state = np.zeros((total_length, 4), np.float16)
+
+        effects = np.array([])
         for effect, (frame, update) in frames:
             if update:
                 fade_value = effect.fadeValue
                 frame_arr = np.zeros((total_length, 4))
-                for i in range(effect.ledCount):
-                    chain,index=effect.leds[i]
-                    frame_arr[chain_indexes[chain][0]+index] = frame[i] * fade_value
-                chain_state = chain_state + frame_arr
+                chains = effect.led_map
+                for chain, start, end in chains:
+                    frame_arr[chain_indexes[chain][0]+start:chain_indexes[chain][0]+end] = frame[start: end]
+                #chain_state = chain_state + frame_arr * fade_value
+                effects = np.append(effects, frame_arr * fade_value)
 
-
+        chain_state = np.sum(effects, axis=0)
         chain_state = np.clip(chain_state, 0.0, 1.0)
 
 
@@ -428,6 +431,7 @@ class ledEffect:
         self.ledChains    = []
         self.leds         = []
         self.enabled = self.autoStart
+        self.led_map = []
         if not self.enabled:
             self.nextEventTime = self.handler.reactor.NEVER
             self.lastUpdateApplied = True
@@ -444,9 +448,11 @@ class ledEffect:
                     self.ledChains.append(ledChain)
 
                 if ledIndices == [] :
+                    self.led_map.append((ledChain, len(self.leds), len(self.leds) + ledChain.led_helper.get_led_count()))
                     for i in range(ledChain.led_helper.get_led_count()):
                         self.leds.append((ledChain, int(i)))
                 else:
+                    self.led_map.append((ledChain, len(self.leds) + ledIndices[0], len(self.leds) + ledIndices[-1]))
                     for led in ledIndices:
                         self.leds.append((ledChain, led))
 
