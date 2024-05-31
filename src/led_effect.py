@@ -215,30 +215,25 @@ class ledFrameHandler:
 
         for effect, (frame, update) in frames:
             chains = effect.led_map
-            for chain, start, end in chains:
+            for chain, start, end, full_length, subchain_start, subchain_end in chains:
                 if chain not in chain_indexes:
                     length = end - start
-                    chain_indexes[chain] = (total_length, total_length + length)
+                    chain_indexes[chain] = (total_length, total_length + length, full_length, subchain_start, subchain_end)
                     total_length += length
 
         chain_state = np.zeros((total_length, 4), np.float16)
 
-        #effects = []
         for effect, (frame, update) in frames:
-            #logging.info(effect.name)
             fade_value = effect.fadeValue
             chains = effect.led_map
-            for chain, start, end in chains:
-                chain_start, chain_end = chain_indexes[chain]
+            for chain, start, end, _, _, _ in chains:
+                chain_start, chain_end, _, _, _ = chain_indexes[chain]
                 chain_state[chain_start:chain_start + end - start] += (frame[start: end] * fade_value)
-            #np.add(chain_state, frame_arr * fade_value, out=chain_state)
 
-        #effects = np.array(effects, np.float16)
-        #chain_state = np.sum(effects, axis=0)
         np.core.umath.minimum(np.core.umath.maximum(chain_state, 0.0, out=chain_state), 1.0, out=chain_state)
 
-        for chain, (start, end) in chain_indexes.items():
-            chain.led_helper.led_state = chain_state[start:end].tolist()
+        for chain, (start, end, _, subchain_start, subchain_end) in chain_indexes.items():
+            chain.led_helper.led_state[subchain_start: subchain_end] = chain_state[start:end].tolist()
 
         for chain in chain_indexes.keys():
             if hasattr(chain,"prev_data"):
@@ -414,12 +409,26 @@ class ledEffect:
                     self.ledChains.append(ledChain)
 
                 if ledIndices == [] :
-                    self.led_map.append((ledChain, len(self.leds), len(self.leds) + ledChain.led_helper.get_led_count()))
+                    self.led_map.append((
+                        ledChain,
+                        len(self.leds), # start position on this effects frame
+                        len(self.leds) + ledChain.led_helper.get_led_count(), # end position on this effects frame
+                        ledChain.led_helper.get_led_count(), # total length of the chain (used when subset of LEDs are defined)
+                        0, # start led position in the chain
+                        ledChain.led_helper.get_led_count() - 1 # end led position in the chain
+                        ))
                     for i in range(ledChain.led_helper.get_led_count()):
                         self.leds.append((ledChain, int(i)))
                 else:
                     chain_sublength = ledIndices[-1] - ledIndices[0]
-                    self.led_map.append((ledChain, len(self.leds), len(self.leds) + chain_sublength))
+                    self.led_map.append((
+                        ledChain, 
+                        len(self.leds), # start position on this effects frame
+                        len(self.leds) + chain_sublength, # end position on this effects frame
+                        ledChain.led_helper.get_led_count(), # total length of the chain (used when subset of LEDs are defined)
+                        ledIndices[0] - 1, # start led position in the chain
+                        ledIndices[-1] - 1 # end led position in the chain
+                        ))
                     for led in ledIndices:
                         self.leds.append((ledChain, led))
 
@@ -528,7 +537,7 @@ class ledEffect:
                             frame = f(maybeFrame, frame)
 
                 remainingFade = 0.0    
-                if (self.fadeEndTime > eventtime): # and (self.fadeTime > 0.0):
+                if self.fadeEndTime > eventtime and self.fadeTime > 0.0:
                     remainingFade = ((self.fadeEndTime - eventtime) / self.fadeTime)
 
                 self.fadeValue = 1.0-remainingFade if enabled else remainingFade
@@ -1436,7 +1445,7 @@ class ledEffect:
                     self.coloridx = (self.coloridx + 1) % len(self.paletteColors)
                     self.my_flag[endstop] = self.frameHandler.homing_end_flag[endstop]
 
-            frame = self.frames[self.coloridx ] * self.decayTable[self.counter]
+            frame = self.frames[self.coloridx] * self.decayTable[self.counter]
             if self.counter < self.decayLen-1:
                 self.counter += 1 
             
