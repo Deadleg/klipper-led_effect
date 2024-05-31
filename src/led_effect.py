@@ -9,6 +9,7 @@
 from math import cos, exp, pi
 from random import randint
 from typing import List, Optional
+import logging
 import numpy as np
 import numpy.typing as npt
 
@@ -209,72 +210,37 @@ class ledFrameHandler:
         # Store results in local variable to prevent overhead of attribute lookups
         frames = [(effect, effect.getFrame(eventtime)) for effect in self.effects if not effect.lastUpdateApplied]
 
-        total_leds = sum([chain.led_helper.get_led_count() for chain in self.ledChains])
-        chainsToUpdate = set()
         chain_indexes = {}
         total_length = 0
 
         for effect, (frame, update) in frames:
-            for i in range(effect.ledCount):
-                chain,index=effect.leds[i]
+            chains = effect.led_map
+            for chain, start, end in chains:
+                logging.info(chain)
                 if chain not in chain_indexes:
-                    chain_indexes[chain] = (total_length, total_length + chain.led_helper.get_led_count())
-                    total_length = chain.led_helper.get_led_count() + total_length
-                    chainsToUpdate.add(chain)
+                    length = end - start
+                    chain_indexes[chain] = (total_length, total_length + length)
+                    total_length += length
 
         chain_state = np.zeros((total_length, 4), np.float16)
 
-        effects = np.array([])
+        #effects = []
         for effect, (frame, update) in frames:
-            if update:
-                fade_value = effect.fadeValue
-                frame_arr = np.zeros((total_length, 4))
-                chains = effect.led_map
-                for chain, start, end in chains:
-                    frame_arr[chain_indexes[chain][0]+start:chain_indexes[chain][0]+end] = frame[start: end]
-                #chain_state = chain_state + frame_arr * fade_value
-                effects = np.append(effects, frame_arr * fade_value)
+            fade_value = effect.fadeValue
+            chains = effect.led_map
+            for chain, start, end in chains:
+                chain_start, chain_end = chain_indexes[chain]
+                chain_state[chain_start:chain_end] += (frame[start: end] * fade_value)
+            #np.add(chain_state, frame_arr * fade_value, out=chain_state)
 
-        chain_state = np.sum(effects, axis=0)
-        chain_state = np.clip(chain_state, 0.0, 1.0)
+        #effects = np.array(effects, np.float16)
+        #chain_state = np.sum(effects, axis=0)
+        np.core.umath.minimum(np.core.umath.maximum(chain_state, 0.0, out=chain_state), 1.0, out=chain_state)
 
-
-        #for effect, (frame, update) in frames:
-        #    fadeValue = effect.fadeValue
-
-        #    if fadeValue == 0:
-        #        continue
-
-        #    for i in range(effect.ledCount):
-        #        chain,index=effect.leds[i]
-
-        #        current_state=states[(chain, index)]
-        #        
-        #        colors = frame[i*COLORS:i*COLORS+COLORS]
-
-        #        if colors == EMPTY_COLORS:
-        #            continue
-
-        #        try:
-        #            current_state[0]+=colors[0]*fadeValue
-        #            current_state[1]+=colors[1]*fadeValue
-        #            current_state[2]+=colors[2]*fadeValue
-        #            current_state[3]+=colors[3]*fadeValue
-        #        except:
-        #            print(effect.name)
-        #            print(current_state)
-        #            print(colors)
-        
         for chain, (start, end) in chain_indexes.items():
             chain.led_helper.led_state = chain_state[start:end].tolist()
-        #for (chain, index), led in :
-        #    led[0] = max(min(1.0, led[0]), 0.0)
-        #    led[1] = max(min(1.0, led[1]), 0.0)
-        #    led[2] = max(min(1.0, led[2]), 0.0)
-        #    led[3] = max(min(1.0, led[3]), 0.0)
-        #    chain.led_helper.led_state[index] = led
 
-        for chain in chainsToUpdate:
+        for chain in chain_indexes.keys():
             if hasattr(chain,"prev_data"):
                 chain.prev_data = None # workaround to force update of dotstars
             if not self.shutdown: 
@@ -531,7 +497,8 @@ class ledEffect:
         npt.NDArray[np.float16]
             Shape (self.ledCount, 4)
         """
-        if not self.enabled and self.fadeValue <= 0.0:
+        enabled = self.enabled
+        if not enabled and self.fadeValue <= 0.0:
             if self.nextEventTime < self.handler.reactor.NEVER: #TODO
                 # Effect has just been disabled. Set colors to 0 and update once.
                 self.nextEventTime = self.handler.reactor.NEVER
@@ -548,21 +515,23 @@ class ledEffect:
                 update = True
                 self.nextEventTime = eventtime + self.frameRate
 
-                frame: npt.NDArray[np.float16] = np.zeros((self.ledCount, 4), dtype=np.float16)
+                frame: npt.NDArray[np.float16] = None
 
                 for layer in self.layers:
                     maybeFrame = layer.nextFrame(eventtime)
                     if maybeFrame is not None:
-                        f = layer.blendingMode
-                        frame = f(maybeFrame, frame)
+                        if frame is None:
+                            frame = maybeFrame
+                        else:
+                            f = layer.blendingMode
+                            frame = f(maybeFrame, frame)
 
-                if (self.fadeEndTime > eventtime) and (self.fadeTime > 0.0):
+                remainingFade = 0.0    
+                if (self.fadeEndTime > eventtime): # and (self.fadeTime > 0.0):
                     remainingFade = ((self.fadeEndTime - eventtime) / self.fadeTime)
-                else:
-                    remainingFade = 0.0    
 
-                self.fadeValue = 1.0-remainingFade if self.enabled else remainingFade
-                self.frame = frame.copy()
+                self.fadeValue = 1.0-remainingFade if enabled else remainingFade
+                self.frame = frame
             else:
                 update = True
                 frame = self.frame
@@ -738,14 +707,12 @@ class ledEffect:
         def __init__(self,  **kwargs):
             super(ledEffect.layerStatic, self).__init__(**kwargs)
 
-            self.paletteColors = colorArray(COLORS, self.paletteColors)
-
             gradientLength = int(self.ledCount)
-            gradient = colorArray(COLORS, self._gradient(self.paletteColors, 
+            gradient = self._gradient(self.paletteColors, 
                                                 gradientLength))
 
-            self.thisFrame.append(list(gradient[0:self.ledCount]))
-            self.frameCount = len(self.thisFrame)
+            self.frames.append(gradient[0:self.ledCount])
+            self.frameCount = 1
 
     #Slow pulsing of color
     class layerBreathing(_layerBase):
@@ -1012,11 +979,11 @@ class ledEffect:
             if len(self.paletteColors) == 1:
                 self.paletteColors += self.paletteColors
 
-            gradient = colorArray(COLORS, self._gradient(self.paletteColors[:-1], 200) +
-                                    self.paletteColors[-1:])
+            gradient = self._gradient(self.paletteColors[:-1], 200) +
+                                    self.paletteColors[-1:]
 
             for i in range(len(gradient)):
-                self.thisFrame.append(list(gradient[i] * self.ledCount))
+                self.frames.append(gradient[i] * self.ledCount)
 
             self.frameCount = len(self.thisFrame)
 
