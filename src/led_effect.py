@@ -216,6 +216,7 @@ class ledFrameHandler:
         for effect, (frame, update) in frames:
             chains = effect.led_map
             for chain, start, end in chains:
+                logging.info(chain)
                 if chain not in chain_indexes:
                     length = end - start
                     chain_indexes[chain] = (total_length, total_length + length)
@@ -229,7 +230,7 @@ class ledFrameHandler:
             chains = effect.led_map
             for chain, start, end in chains:
                 chain_start, chain_end = chain_indexes[chain]
-                chain_state[chain_start:chain_start+end-start] += (frame[0: end - start] * fade_value)
+                chain_state[chain_start:chain_end] += (frame[start: end] * fade_value)
             #np.add(chain_state, frame_arr * fade_value, out=chain_state)
 
         #effects = np.array(effects, np.float16)
@@ -522,7 +523,8 @@ class ledEffect:
                         if frame is None:
                             frame = maybeFrame
                         else:
-                            frame = layer.blendingMode(maybeFrame, frame)
+                            f = layer.blendingMode
+                            frame = f(maybeFrame, frame)
 
                 remainingFade = 0.0    
                 if (self.fadeEndTime > eventtime): # and (self.fadeTime > 0.0):
@@ -633,6 +635,8 @@ class ledEffect:
             """
             frameNumber = (self.frameNumber + 1) % self.frameCount
             self.frameNumber = frameNumber
+            self.lastFrameTime = eventtime
+
             return self.frames[frameNumber]
 
         def _decayTable(self, factor=1.0, rate=1.0) -> npt.NDArray[np.float16]:
@@ -641,7 +645,7 @@ class ledEffect:
             p = (1.0 / self.frameRate)
             r = (p/15.0)*factor
 
-            for s in range(0, int((rate<1)+rate)):
+            for _ in range(0, int((rate<1)+rate)):
                 frame = np.append(frame, 1.0)
                 for x in range(2, int(p / rate)):
                     b = exp(1)**-(x/r)
@@ -708,9 +712,6 @@ class ledEffect:
 
             self.frames = np.append(self.frames, [gradient], axis=0)
             self.frameCount = 1
-
-        def nextFrame(self, eventtime):
-            return self.frames[0]
 
     #Slow pulsing of color
     class layerBreathing(_layerBase):
@@ -1412,17 +1413,15 @@ class ledEffect:
         def __init__(self,  **kwargs):
             super(ledEffect.layerHoming, self).__init__(**kwargs)
 
-            self.paletteColors = colorArray(COLORS, self.paletteColors)
-
             gradientLength = int(self.ledCount)
             gradient = self._gradient(self.paletteColors, gradientLength)
 
             for c in range(0, len(self.paletteColors)):
-                color = self.paletteColors[c]
-                self.frames = np.append(color.repeat(self.ledCount))
+                color = self.paletteColors[c].reshape((1,1, 4)).repeat(self.ledCount, axis=1)
+                self.frames = np.append(self.frames, color, axis=0)
 
             self.decayTable = self._decayTable(factor=self.effectRate)
-            self.decayTable np.append(0.0)
+            self.decayTable = np.append(self.decayTable,0.0)
             self.decayLen = len(self.decayTable)
             self.counter=self.decayLen-1
             self.coloridx=-1
@@ -1433,7 +1432,6 @@ class ledEffect:
 
         def nextFrame(self, eventtime):
             for endstop in self.handler.endstops:
-
                 if self.my_flag[endstop] != self.frameHandler.homing_end_flag[endstop]:
                     self.counter = 0
                     self.coloridx = (self.coloridx + 1) % len(self.paletteColors)
@@ -1444,7 +1442,6 @@ class ledEffect:
                 self.counter += 1 
             
             return frame
-
     class layerSwitchButton(_layerBase):
         def __init__(self,  **kwargs):
             super(ledEffect.layerSwitchButton, self).__init__(**kwargs)
