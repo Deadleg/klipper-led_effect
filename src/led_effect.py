@@ -709,9 +709,9 @@ class ledEffect:
 
             gradientLength = int(self.ledCount)
             gradient = self._gradient(self.paletteColors, 
-                                                gradientLength))
+                                                gradientLength)
 
-            self.frames.append(gradient[0:self.ledCount])
+            self.frames = np.append(self.frames, [gradient], axis=0)
             self.frameCount = 1
 
     #Slow pulsing of color
@@ -979,13 +979,13 @@ class ledEffect:
             if len(self.paletteColors) == 1:
                 self.paletteColors += self.paletteColors
 
-            gradient = self._gradient(self.paletteColors[:-1], 200) +
-                                    self.paletteColors[-1:]
+            gradient = self._gradient(self.paletteColors[:-1], 200) + self.paletteColors[-1]
 
             for i in range(len(gradient)):
-                self.frames.append(gradient[i] * self.ledCount)
+                f = gradient[i:i+1].repeat(self.ledCount, axis=0)
+                self.frames = np.append(self.frames, [f], axis=0)
 
-            self.frameCount = len(self.thisFrame)
+            self.frameCount = len(self.frames)
 
             if self.handler.heater is None:
                 raise self.handler.printer.config_error(
@@ -1004,22 +1004,22 @@ class ledEffect:
                 if (heaterCurrent >= effectRate):
                     if (heaterCurrent <= heaterTarget-2):
                         s = int(((heaterCurrent - effectRate) / heaterTarget) * 200)
-                        s = min(len(self.thisFrame)-1,s)
-                        return self.thisFrame[s]
+                        s = min(len(self.frames)-1,s)
+                        return self.frames[s]
                     elif self.effectCutoff > 0:
-                        return None
+                        return self.emptyFrame
                     else:
-                        return self.thisFrame[-1]
+                        return self.frames[-1]
                 else:
-                    return None
+                    return self.emptyFrame
 
             elif effectRate > 0 and heaterCurrent > 0.0:
                 if heaterCurrent >= effectRate and heaterLast > 0:
                     s = int(((heaterCurrent - effectRate) / heaterLast) * 200)
-                    s = min(len(self.thisFrame)-1,s)
-                    return self.thisFrame[s]
+                    s = min(len(self.ledCount)-1,s)
+                    return self.frames[s]
 
-            return None
+            return self.emptyFrame
 
     #Responds to heater temperature
     class layerTemperature(_layerBase):
