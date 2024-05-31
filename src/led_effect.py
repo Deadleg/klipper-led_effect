@@ -216,7 +216,6 @@ class ledFrameHandler:
         for effect, (frame, update) in frames:
             chains = effect.led_map
             for chain, start, end in chains:
-                logging.info(chain)
                 if chain not in chain_indexes:
                     length = end - start
                     chain_indexes[chain] = (total_length, total_length + length)
@@ -230,7 +229,7 @@ class ledFrameHandler:
             chains = effect.led_map
             for chain, start, end in chains:
                 chain_start, chain_end = chain_indexes[chain]
-                chain_state[chain_start:chain_end] += (frame[start: end] * fade_value)
+                chain_state[chain_start:chain_start+end-start] += (frame[0: end - start] * fade_value)
             #np.add(chain_state, frame_arr * fade_value, out=chain_state)
 
         #effects = np.array(effects, np.float16)
@@ -523,8 +522,7 @@ class ledEffect:
                         if frame is None:
                             frame = maybeFrame
                         else:
-                            f = layer.blendingMode
-                            frame = f(maybeFrame, frame)
+                            frame = layer.blendingMode(maybeFrame, frame)
 
                 remainingFade = 0.0    
                 if (self.fadeEndTime > eventtime): # and (self.fadeTime > 0.0):
@@ -635,12 +633,9 @@ class ledEffect:
             """
             frameNumber = (self.frameNumber + 1) % self.frameCount
             self.frameNumber = frameNumber
-            self.lastFrameTime = eventtime
-
             return self.frames[frameNumber]
 
         def _decayTable(self, factor=1.0, rate=1.0) -> npt.NDArray[np.float16]:
-
             frame = np.array([], dtype = np.float16)
 
             p = (1.0 / self.frameRate)
@@ -713,6 +708,9 @@ class ledEffect:
 
             self.frames = np.append(self.frames, [gradient], axis=0)
             self.frameCount = 1
+
+        def nextFrame(self, eventtime):
+            return self.frames[0]
 
     #Slow pulsing of color
     class layerBreathing(_layerBase):
