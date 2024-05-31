@@ -1415,15 +1415,14 @@ class ledEffect:
             self.paletteColors = colorArray(COLORS, self.paletteColors)
 
             gradientLength = int(self.ledCount)
-            gradient = colorArray(COLORS, self._gradient(self.paletteColors, 
-                                                gradientLength))
+            gradient = self._gradient(self.paletteColors, gradientLength)
 
             for c in range(0, len(self.paletteColors)):
                 color = self.paletteColors[c]
-                self.thisFrame.append(list(colorArray(COLORS,color*self.ledCount)))
+                self.frames = np.append(color.repeat(self.ledCount))
 
             self.decayTable = self._decayTable(factor=self.effectRate)
-            self.decayTable.append(0.0)
+            self.decayTable np.append(0.0)
             self.decayLen = len(self.decayTable)
             self.counter=self.decayLen-1
             self.coloridx=-1
@@ -1445,6 +1444,7 @@ class ledEffect:
                 self.counter += 1 
             
             return frame
+
     class layerSwitchButton(_layerBase):
         def __init__(self,  **kwargs):
             super(ledEffect.layerSwitchButton, self).__init__(**kwargs)
