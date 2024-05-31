@@ -216,7 +216,6 @@ class ledFrameHandler:
         for effect, (frame, update) in frames:
             chains = effect.led_map
             for chain, start, end in chains:
-                logging.info(chain)
                 if chain not in chain_indexes:
                     length = end - start
                     chain_indexes[chain] = (total_length, total_length + length)
@@ -226,11 +225,12 @@ class ledFrameHandler:
 
         #effects = []
         for effect, (frame, update) in frames:
+            #logging.info(effect.name)
             fade_value = effect.fadeValue
             chains = effect.led_map
             for chain, start, end in chains:
                 chain_start, chain_end = chain_indexes[chain]
-                chain_state[chain_start:chain_end] += (frame[start: end] * fade_value)
+                chain_state[chain_start:chain_start + end - start] += (frame[start: end] * fade_value)
             #np.add(chain_state, frame_arr * fade_value, out=chain_state)
 
         #effects = np.array(effects, np.float16)
@@ -418,7 +418,8 @@ class ledEffect:
                     for i in range(ledChain.led_helper.get_led_count()):
                         self.leds.append((ledChain, int(i)))
                 else:
-                    self.led_map.append((ledChain, len(self.leds) + ledIndices[0], len(self.leds) + ledIndices[-1]))
+                    chain_sublength = ledIndices[-1] - ledIndices[0]
+                    self.led_map.append((ledChain, len(self.leds), len(self.leds) + chain_sublength))
                     for led in ledIndices:
                         self.leds.append((ledChain, led))
 
@@ -1190,14 +1191,14 @@ class ledEffect:
             if self.effectRate == 0:
                 trailing = np.zeros((self.ledCount, COLORS))
             else:
-                trailing = np.zeros((self.ledCount, COLORS)) + self._gradient(self.paletteColors[1:], int(self.effectRate), True)
+                trailing = np.concatenate((np.zeros((self.ledCount, COLORS)), self._gradient(self.paletteColors[1:], int(self.effectRate), True)))
 
             if self.effectCutoff == 0:
                 trailing = np.zeros((self.ledCount, COLORS))
             else:
-                leading = self._gradient(self.paletteColors[1:], int(self.effectCutoff), False) + np.zeros((self.ledCount, COLORS))
+                leading = np.concatenate((self._gradient(self.paletteColors[1:], int(self.effectCutoff), False), np.zeros((self.ledCount, COLORS))))
 
-            gradient = trailing + self.paletteColors[0] + leading
+            gradient = np.concatenate((trailing, [self.paletteColors[0]], leading))
             gradient = np.roll(gradient, len(trailing)-1)
             frames = [gradient[:self.ledCount]]
 
