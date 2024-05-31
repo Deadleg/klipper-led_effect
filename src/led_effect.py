@@ -1198,28 +1198,31 @@ class ledEffect:
                 self.effectCutoff = self.ledCount
 
             if self.effectRate == 0:
-                trailing = np.zeros((self.ledCount, COLORS))
+                trailing = np.zeros((1, COLORS))
             else:
-                trailing = np.concatenate((np.zeros((self.ledCount, COLORS)), self._gradient(self.paletteColors[1:], int(self.effectRate), True)))
+                trailing = self._gradient(self.paletteColors[1:], int(self.effectRate), True)
 
             if self.effectCutoff == 0:
-                trailing = np.zeros((self.ledCount, COLORS))
+                leading = np.zeros((self.ledCount - len(trailing) - 1, COLORS))
             else:
-                leading = np.concatenate((self._gradient(self.paletteColors[1:], int(self.effectCutoff), False), np.zeros((self.ledCount, COLORS))))
+                leading = np.concatenate((
+                    self._gradient(self.paletteColors[1:], int(self.effectCutoff), False),
+                    np.zeros((self.ledCount - len(trailing) - 1, COLORS)) # Long than chain so we can roll the array without bleed colours
+                    ))
 
             gradient = np.concatenate((trailing, [self.paletteColors[0]], leading))
-            gradient = np.roll(gradient, len(trailing)-1)
+            gradient = np.roll(gradient, -len(trailing), axis=0)
             frames = [gradient[:self.ledCount]]
 
             for i in range(0, self.ledCount):
-                gradient = np.roll(gradient,1)
+                gradient = np.roll(gradient, 1, axis=0)
                 frames.append(gradient[:self.ledCount])
 
-            for i in range(101):
-                x = int((i / 101.0) * self.ledCount)
-                self.frames = np.append(self.frames, [frames[x]], axis=0)
+            for i in range(self.ledCount):
+                self.frames = np.append(self.frames, [frames[i]], axis=0)
 
             self.frameCount = len(self.frames)
+            self.led_step = self.ledCount / 101
 
         def nextFrame(self, eventtime):
             if self.handler.stepper == 'x': 
@@ -1229,13 +1232,9 @@ class ledEffect:
             else: 
                 axis = 2
 
-            p = self.frameHandler.stepperPositions[int(axis)]
+            p = self.led_step * self.frameHandler.stepperPositions[axis]
 
-            if p < 0: 
-                p=0
-            if p > 100: 
-                p=100
-            return self.frames[int((p - 1) * (p > 0))]
+            return self.frames[int(p)]
 
     class layerStepperColor(_layerBase):
         def __init__(self,  **kwargs):
@@ -1250,14 +1249,14 @@ class ledEffect:
                 self.thisFrame.append(list(gradient[i] * self.ledCount))
 
         def nextFrame(self, eventtime):
-            if self.handler.stepper == 'x': axis = 0
-            elif self.handler.stepper == 'y': axis = 1
-            else: axis = 2
+            if self.handler.stepper == 'x': 
+                axis = 0
+            elif self.handler.stepper == 'y': 
+                axis = 1
+            else: 
+                axis = 2
 
-            p = self.frameHandler.stepperPositions[int(axis)]*self.effectRate+self.effectCutoff
-                        
-            if p < 0 : p=0
-            if p > 100 : p=100
+            p = min(100,max(0,self.frameHandler.stepperPositions[int(axis)]*self.effectRate+self.effectCutoff))
 
             return self.thisFrame[int(p)]
 
