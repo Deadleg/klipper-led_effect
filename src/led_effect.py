@@ -735,7 +735,7 @@ class ledEffect:
 
             for x in range(0, int(p)):
                 if x < p:
-                    v  = (exp(-cos((f / p) * (x+o)))-0.367879) / 2.35040238
+                    v  = (exp(-cos((f / p) * (x)))-0.367879) / 2.35040238
                 else:
                     v = 0
 
@@ -746,20 +746,26 @@ class ledEffect:
                     v = 0.0
 
                 brightness.append(v)
+            brightness = np.array(brightness)
 
             for c in range(0, len(self.paletteColors)):
-                color = list(self.paletteColors[c])
+                color = self.paletteColors[c]
 
-                for b in brightness:
-                    self.thisFrame += [[b * i for i in color] * self.ledCount]
+                x = brightness.reshape((-1, 1)) * color
+                frames = x.repeat(self.ledCount, axis=0).reshape((len(brightness), self.ledCount, COLORS))
+                self.frames = np.concatenate((self.frames, frames))
 
-            self.frameCount = len(self.thisFrame)
+                #for b in brightness:
+                #    self.thisFrame += [[b * i for i in color] * self.ledCount]
+
+            self.frameCount = len(self.frames)
     class layerLinearFade(_layerBase):
         def __init__(self,  **kwargs):
             super(ledEffect.layerLinearFade, self).__init__(**kwargs)
 
             gradientLength = int(self.effectRate / self.frameRate) 
-            if gradientLength == 0: gradientLength = 1
+            if gradientLength == 0: 
+                gradientLength = 1
 
             gradient   = colorArray(COLORS, self._gradient(self.paletteColors, 
                                                    gradientLength, toFirst=True))
@@ -821,24 +827,6 @@ class ledEffect:
 
             self.thisFrame = previously_unlit_leds + previously_lit_leds
 
-            #for i in range(0, self.ledCount):
-            #    r = randint(0, self.colorCount)
-            #    color = self.paletteColors[r]
-
-            #    if randint(0, 255) > 254 - self.effectRate:
-            #        self.lastBrightness[i] = 0
-            #        self.thisFrame[i] = color
-
-            #    if self.lastBrightness[i] != -1:
-            #        if self.lastBrightness[i] == self.decayLen:
-            #            self.lastBrightness[i] = -1
-            #            self.thisFrame[i] = ([0.0]*COLORS)
-            #        else:
-            #            x = self.lastBrightness[i]
-            #            self.lastBrightness[i] += 1
-            #            self.thisFrame[i] = [self.decayTable[x] * l
-            #                                    for l in self.thisFrame[i]]
-
             return self.thisFrame
 
     #Blinking with decay
@@ -851,21 +839,25 @@ class ledEffect:
                 frameCount = 1
             else:
                 frameCount = max(1,int(frameRate / self.effectRate))
-            if self.effectCutoff==0: self.effectCutoff=0.001
+            if self.effectCutoff==0: 
+                self.effectCutoff=0.001
             decayTable = self._decayTable(factor=1 / self.effectCutoff,
                                           rate=1)
             if len(decayTable) > frameCount:
                 decayTable = decayTable[:frameCount]
             else:
-                decayTable += [0.0] * (frameCount - len(decayTable))
+                decayTable = np.concatenate((decayTable, np.zeros(frameCount - len(decayTable))))
 
             for c in range(0, len(self.paletteColors)):
                 color = self.paletteColors[c]
 
-                for b in decayTable:
-                    self.thisFrame += [[b * i for i in color] * self.ledCount]
+                x = decayTable.reshape((-1, 1)) * color
+                frames = x.repeat(self.ledCount, axis=0).reshape((frameCount, self.ledCount, COLORS))
+                #for b in decayTable:
+                #    self.thisFrame += [[b * i for i in color] * self.ledCount]
+                self.frames = np.concatenate((self.frames, frames))
 
-            self.frameCount = len(self.thisFrame)
+            self.frameCount = len(self.frames)
 
     #Lights move sequentially with decay
     class layerComet(_layerBase):
