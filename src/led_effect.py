@@ -792,32 +792,52 @@ class ledEffect:
         def __init__(self,  **kwargs):
             super(ledEffect.layerTwinkle, self).__init__(**kwargs)
 
-            self.thisFrame = colorArray(COLORS, ([0.0]*COLORS) * self.ledCount)
-            self.lastBrightness  = [-1] * self.ledCount
+            self.thisFrame = np.zeros((self.ledCount, COLORS), np.float16)
+            self.lastBrightness  = np.zeros(self.ledCount)
             self.decayTable = self._decayTable(factor=1 / self.effectCutoff)
             self.decayLen = len(self.decayTable)
             self.colorCount = len(self.paletteColors) - 1
+            self.gen = np.random.default_rng()
+            self.light_distrubtion = np.concatenate((np.zeros(255 - int(self.effectRate)),
+                                                     np.ones(int(self.effectRate))))
 
         def nextFrame(self, eventtime):
+            # previous state 
+            previously_lit = self.lastBrightness > 0
+            previously_unlit = self.lastBrightness == 0
 
-            for i in range(0, self.ledCount):
+            # update decay
+            brightness_update = np.array(((self.lastBrightness + 1) % self.decayLen) * previously_lit, np.int8)
+            previously_lit_leds = self.thisFrame * self.decayTable[brightness_update].reshape((self.ledCount, 1))
 
-                r = randint(0, self.colorCount)
-                color = self.paletteColors[r]
+            # maybe light new leds
+            new_colours_indexes = self.gen.choice(self.colorCount, size=self.ledCount)
+            new_colours = self.paletteColors[new_colours_indexes]
+            light_up_prob = self.gen.choice(self.light_distrubtion, size=self.ledCount)
 
-                if randint(0, 255) > 254 - self.effectRate:
-                    self.lastBrightness[i] = 0
-                    self.thisFrame[i] = color
+            self.lastBrightness = brightness_update + previously_unlit * light_up_prob
 
-                if self.lastBrightness[i] != -1:
-                    if self.lastBrightness[i] == self.decayLen:
-                        self.lastBrightness[i] = -1
-                        self.thisFrame[i] = ([0.0]*COLORS)
-                    else:
-                        x = self.lastBrightness[i]
-                        self.lastBrightness[i] += 1
-                        self.thisFrame[i] = [self.decayTable[x] * l
-                                                for l in self.thisFrame[i]]
+            previously_unlit_leds = (previously_unlit * light_up_prob).reshape((self.ledCount, 1)) * new_colours
+
+            self.thisFrame = previously_unlit_leds + previously_lit_leds
+
+            #for i in range(0, self.ledCount):
+            #    r = randint(0, self.colorCount)
+            #    color = self.paletteColors[r]
+
+            #    if randint(0, 255) > 254 - self.effectRate:
+            #        self.lastBrightness[i] = 0
+            #        self.thisFrame[i] = color
+
+            #    if self.lastBrightness[i] != -1:
+            #        if self.lastBrightness[i] == self.decayLen:
+            #            self.lastBrightness[i] = -1
+            #            self.thisFrame[i] = ([0.0]*COLORS)
+            #        else:
+            #            x = self.lastBrightness[i]
+            #            self.lastBrightness[i] += 1
+            #            self.thisFrame[i] = [self.decayTable[x] * l
+            #                                    for l in self.thisFrame[i]]
 
             return self.thisFrame
 
