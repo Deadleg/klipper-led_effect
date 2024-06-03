@@ -210,41 +210,31 @@ class ledFrameHandler:
         # Store results in local variable to prevent overhead of attribute lookups
         frames = [(effect, effect.getFrame(eventtime)) for effect in self.effects if not effect.lastUpdateApplied]
 
-        chain_indexes = {}
         total_length = 0
         updated_led_mask = {}
 
+        for chain in self.ledChains:
+            updated_led_mask[chain] = np.array(chain.led_helper.led_state)
+
         for effect, (frame, update) in frames:
             chains = effect.led_map
-            for chain, start, end, full_length, subchain_start, subchain_end in chains:
-                if chain not in chain_indexes:
-                    chain_indexes[chain] = (total_length, total_length + full_length, subchain_start, subchain_end)
-                    total_length += full_length
-                    updated_led_mask[chain] = np.zeros((full_length, 1), dtype=np.int8)
-                updated_led_mask[chain][subchain_start:subchain_end] = np.ones((subchain_end - subchain_start, 1))
-
-        chain_state = np.zeros((total_length, 4), np.bool_)
+            for chain, start, end, subchain_start, subchain_end in chains:
+                updated_led_mask[chain][subchain_start:subchain_end] = np.zeros((subchain_end - subchain_start, 1))
 
         for effect, (frame, update) in frames:
             fade_value = effect.fadeValue
             chains = effect.led_map
-            for chain, start, end, _, subchain_start, subchain_end in chains:
-                chain_start, chain_end, _, _ = chain_indexes[chain]
-                # TODO why can't we use chain_end when set_led_effect is used?
-                chain_state[chain_start + subchain_start:chain_start + subchain_end] += (frame[start: end] * fade_value)
+            for chain, start, end, subchain_start, subchain_end in chains:
+                updated_led_mask[chain][subchain_start:subchain_end] += (frame[start: end] * fade_value)
 
-        np.core.umath.minimum(np.core.umath.maximum(chain_state, 0.0, out=chain_state), 1.0, out=chain_state)
+        for chain, leds in updated_led_mask.items():
+            led_state = np.core.umath.minimum(np.core.umath.maximum(leds, 0.0), 1.0)
 
-        for chain, (start, end, _, _) in chain_indexes.items():
-            # TODO
-            mask = updated_led_mask[chain]
-            chain.led_helper.led_state = ((np.array(chain.led_helper.led_state) * (mask == 0)) + (chain_state[start: end] * mask)).tolist()
-
-        for chain in chain_indexes.keys():
             if hasattr(chain,"prev_data"):
                 chain.prev_data = None # workaround to force update of dotstars
             if not self.shutdown: 
-                chain.led_helper.update_func(chain.led_helper.led_state, None)
+                chain.led_helper.update_func(led_state, None)
+
         if self.effects:
             next_eventtime=min(self.effects, key=lambda x: x.nextEventTime)\
                             .nextEventTime
@@ -413,12 +403,14 @@ class ledEffect:
                 if ledChain not in self.ledChains:
                     self.ledChains.append(ledChain)
 
+                if ledChain not in self.handler.ledChains:
+                    self.handler.ledChains.append(ledChain)
+
                 if ledIndices == [] :
                     self.led_map.append((
                         ledChain,
                         len(self.leds), # start position on this effects frame
                         len(self.leds) + ledChain.led_helper.get_led_count(), # end position on this effects frame
-                        ledChain.led_helper.get_led_count(), # total length of the chain (used when subset of LEDs are defined)
                         0, # start led position in the chain
                         ledChain.led_helper.get_led_count() # end led position in the chain
                         ))
@@ -430,7 +422,6 @@ class ledEffect:
                         ledChain, 
                         len(self.leds), # start position on this effects frame
                         len(self.leds) + chain_sublength, # end position on this effects frame
-                        ledChain.led_helper.get_led_count(), # total length of the chain (used when subset of LEDs are defined)
                         ledIndices[0] if ledIndices[-1] >= ledIndices[0] else ledIndices[-1], # start led position in the chain
                         (ledIndices[-1] if ledIndices[-1] >= ledIndices[0] else ledIndices[0]) + 1 # end led position in the chain
                         ))
