@@ -212,28 +212,33 @@ class ledFrameHandler:
 
         chain_indexes = {}
         total_length = 0
+        updated_led_mask = {}
 
         for effect, (frame, update) in frames:
             chains = effect.led_map
             for chain, start, end, full_length, subchain_start, subchain_end in chains:
                 if chain not in chain_indexes:
-                    length = end - start
-                    chain_indexes[chain] = (total_length, total_length + length, full_length, subchain_start, subchain_end)
-                    total_length += length
+                    chain_indexes[chain] = (total_length, total_length + full_length, subchain_start, subchain_end)
+                    total_length += full_length
+                    updated_led_mask[chain] = np.zeros((full_length, 1), dtype=np.int8)
+                updated_led_mask[chain][subchain_start:subchain_end] = np.ones((subchain_end - subchain_start, 1))
 
-        chain_state = np.zeros((total_length, 4), np.float16)
+        chain_state = np.zeros((total_length, 4), np.bool_)
 
         for effect, (frame, update) in frames:
             fade_value = effect.fadeValue
             chains = effect.led_map
-            for chain, start, end, _, _, _ in chains:
-                chain_start, chain_end, _, _, _ = chain_indexes[chain]
-                chain_state[chain_start:chain_start + end - start] += (frame[start: end] * fade_value)
+            for chain, start, end, _, subchain_start, subchain_end in chains:
+                chain_start, chain_end, _, _ = chain_indexes[chain]
+                # TODO why can't we use chain_end when set_led_effect is used?
+                chain_state[chain_start + subchain_start:chain_start + subchain_end] += (frame[start: end] * fade_value)
 
         np.core.umath.minimum(np.core.umath.maximum(chain_state, 0.0, out=chain_state), 1.0, out=chain_state)
 
-        for chain, (start, end, _, subchain_start, subchain_end) in chain_indexes.items():
-            chain.led_helper.led_state[subchain_start: subchain_end] = chain_state[start:end].tolist()
+        for chain, (start, end, _, _) in chain_indexes.items():
+            # TODO
+            mask = updated_led_mask[chain]
+            chain.led_helper.led_state = ((np.array(chain.led_helper.led_state) * (mask == 0)) + (chain_state[start: end] * mask)).tolist()
 
         for chain in chain_indexes.keys():
             if hasattr(chain,"prev_data"):
@@ -415,19 +420,19 @@ class ledEffect:
                         len(self.leds) + ledChain.led_helper.get_led_count(), # end position on this effects frame
                         ledChain.led_helper.get_led_count(), # total length of the chain (used when subset of LEDs are defined)
                         0, # start led position in the chain
-                        ledChain.led_helper.get_led_count() - 1 # end led position in the chain
+                        ledChain.led_helper.get_led_count() # end led position in the chain
                         ))
                     for i in range(ledChain.led_helper.get_led_count()):
                         self.leds.append((ledChain, int(i)))
                 else:
-                    chain_sublength = ledIndices[-1] - ledIndices[0]
+                    chain_sublength = len(ledIndices)
                     self.led_map.append((
                         ledChain, 
                         len(self.leds), # start position on this effects frame
                         len(self.leds) + chain_sublength, # end position on this effects frame
                         ledChain.led_helper.get_led_count(), # total length of the chain (used when subset of LEDs are defined)
-                        ledIndices[0] - 1, # start led position in the chain
-                        ledIndices[-1] - 1 # end led position in the chain
+                        ledIndices[0] if ledIndices[-1] >= ledIndices[0] else ledIndices[-1], # start led position in the chain
+                        (ledIndices[-1] if ledIndices[-1] >= ledIndices[0] else ledIndices[0]) + 1 # end led position in the chain
                         ))
                     for led in ledIndices:
                         self.leds.append((ledChain, led))
@@ -875,33 +880,31 @@ class ledEffect:
             # 1d array
             decayTable = self._decayTable(factor=len(self.paletteColors) * self.effectCutoff, rate=1)
 
-            gradient = self.paletteColors[0] + self._gradient(self.paletteColors[1:], len(decayTable))
+            gradient = self._gradient(self.paletteColors, len(decayTable))
 
-            #[c for b in zip(decayTable, decayTable, decayTable, decayTable) \
-                #for c in b]
+            comet = decayTable.reshape((-1, 1)) * gradient
 
-            comet = decayTable.reshape((1, -1)).transpose() * gradient
-
+            remainder_length = max(0, self.ledCount - len(comet))
             # pad to match effect LED length
-            comet = np.append(comet, np.repeat(EMPTY_COLORS.reshape((1, 4)), self.ledCount - len(comet), axis=0), axis=0)
+            comet = np.append(comet, np.repeat(EMPTY_COLORS.reshape((1, 4)), remainder_length, axis=0), axis=0)
 
             if self.direction: 
                 comet = np.flip(comet, axis=0)
             else: 
-                comet = np.array(comet[:self.ledCount - len(comet)] + comet[self.ledCount - len(comet):])
+                led_offset = max(0, len(comet) - self.ledCount)
+                comet = np.roll(comet, led_offset + remainder_length, axis=0)
 
-            shift = int(self.effectRate+(self.effectRate < 1)) * (1 if self.direction else -1)
+            shift = int(self.effectRate + (self.effectRate < 1)) * (1 if self.direction else -1)
             if self.effectRate == 0:
                 self.frames = np.append(self.frames,comet[0:self.ledCount])
             else:                           
                 for i in range(len(comet)):
                     comet = np.roll(comet, shift, axis=0)
-                    #comet.shift(int(self.effectRate+(self.effectRate < 1)), 
-                    #            self.direction)
-                    self.frames = np.append(self.frames,[comet], axis=0)
+
+                    self.frames = np.append(self.frames,[comet[:self.ledCount]], axis=0)
 
                     for x in range(int((1/self.effectRate)-(self.effectRate <= 1))):
-                        self.frames = np.append(self.frames, [comet], axis=0)
+                        self.frames = np.append(self.frames, [comet[:self.ledCount]], axis=0)
 
             self.frameCount = len(self.frames)
 
@@ -1037,7 +1040,7 @@ class ledEffect:
             elif effectRate > 0 and heaterCurrent > 0.0:
                 if heaterCurrent >= effectRate and heaterLast > 0:
                     s = int(((heaterCurrent - effectRate) / heaterLast) * 200)
-                    s = min(len(self.ledCount)-1,s)
+                    s = min(self.ledCount-1,s)
                     return self.frames[s]
 
             return self.emptyFrame
