@@ -212,13 +212,16 @@ class ledFrameHandler:
 
         total_length = 0
         updated_led_mask = {}
+        updated_chain = {}
 
         for chain in self.ledChains:
             updated_led_mask[chain] = np.array(chain.led_helper.led_state)
+            updated_chain[chain] = False
 
         for effect, (frame, update) in frames:
             chains = effect.led_map
             for chain, start, end, subchain_start, subchain_end in chains:
+                updated_chain[chain] = True
                 updated_led_mask[chain][subchain_start:subchain_end] = np.zeros((subchain_end - subchain_start, 1))
 
         for effect, (frame, update) in frames:
@@ -228,12 +231,13 @@ class ledFrameHandler:
                 updated_led_mask[chain][subchain_start:subchain_end] += (frame[start: end] * fade_value)
 
         for chain, leds in updated_led_mask.items():
-            led_state = np.core.umath.minimum(np.core.umath.maximum(leds, 0.0), 1.0)
+            if updated_chain[chain]:
+                led_state = np.core.umath.minimum(np.core.umath.maximum(leds, 0.0), 1.0)
 
-            if hasattr(chain,"prev_data"):
-                chain.prev_data = None # workaround to force update of dotstars
-            if not self.shutdown: 
-                chain.led_helper.update_func(led_state, None)
+                if hasattr(chain,"prev_data"):
+                    chain.prev_data = None # workaround to force update of dotstars
+                if not self.shutdown: 
+                    chain.led_helper.update_func(led_state, None)
 
         if self.effects:
             next_eventtime=min(self.effects, key=lambda x: x.nextEventTime)\
@@ -522,7 +526,6 @@ class ledEffect:
                 self.nextEventTime = eventtime + self.frameRate
 
                 frame: npt.NDArray[np.float16] = None
-
                 for layer in self.layers:
                     maybeFrame = layer.nextFrame(eventtime)
                     if maybeFrame is not None:
