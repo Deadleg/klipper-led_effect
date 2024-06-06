@@ -114,14 +114,15 @@ class ledFrameHandler:
                                                          self.reactor.NOW)
 
     def _handle_shutdown(self):
+        chains_shutdown = set()
         self.shutdown = True
         for effect in self.effects:
             if not effect.runOnShutown:
                 for chain in self.ledChains:
-                    chain.led_helper.set_color(None, [0.0, 0.0, 0.0, 0.0])
-                    chain.led_helper.update_func(chain.led_helper.led_state, None)
-
-        pass
+                    if chain not in chains_shutdown:
+                        chains_shutdown.add(chain)
+                        chain.led_helper.set_color(None, [0.0, 0.0, 0.0, 0.0])
+                        #chain.led_helper.update_func(chain.led_helper.led_state, None)
     
     def _handle_homing_move_begin(self, hmove):
         endstops_being_homed = [name for es,name in hmove.endstops]
@@ -245,7 +246,8 @@ class ledFrameHandler:
             now = self.reactor.monotonic()
             if next_eventtime - now < 0.005:
             #    # Presumably high load, add a small buffer prioritize more critical functions.
-                next_eventtime = now + 0.01
+                next_eventtime = max(next_eventtime, now) + 0.02
+                return next_eventtime
         else:
             next_eventtime = eventtime
         # run at least with 10Hz
@@ -882,11 +884,13 @@ class ledEffect:
             # pad to match effect LED length
             comet = np.append(comet, np.repeat(EMPTY_COLORS.reshape((1, 4)), remainder_length, axis=0), axis=0)
 
+            logging.info(comet)
             if self.direction: 
                 comet = np.flip(comet, axis=0)
             else: 
                 led_offset = max(0, len(comet) - self.ledCount)
                 comet = np.roll(comet, led_offset + remainder_length, axis=0)
+            logging.info(comet)
 
             shift = int(self.effectRate + (self.effectRate < 1)) * (1 if self.direction else -1)
             if self.effectRate == 0:
@@ -894,6 +898,7 @@ class ledEffect:
             else:                           
                 for i in range(len(comet)):
                     comet = np.roll(comet, shift, axis=0)
+                    logging.info(comet)
 
                     self.frames = np.append(self.frames,[comet[:self.ledCount]], axis=0)
 
