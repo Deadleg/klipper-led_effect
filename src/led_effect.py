@@ -223,7 +223,7 @@ class ledFrameHandler:
             chains = effect.led_map
             for chain, start, end, subchain_start, subchain_end in chains:
                 updated_chain[chain] = True
-                updated_led_mask[chain][subchain_start:subchain_end] = np.zeros((subchain_end - subchain_start, 1))
+                updated_led_mask[chain][subchain_start:subchain_end] = np.zeros((subchain_end - subchain_start, 4))
 
         for effect, (frame, update) in frames:
             fade_value = effect.fadeValue
@@ -232,13 +232,15 @@ class ledFrameHandler:
                 updated_led_mask[chain][subchain_start:subchain_end] += (frame[start: end] * fade_value)
 
         for chain, leds in updated_led_mask.items():
-            if updated_chain[chain]:
-                led_state = np.core.umath.minimum(np.core.umath.maximum(leds, 0.0), 1.0)
+            if updated_chain[chain] and not chain.mutex.is_locked:
+                leds = np.core.umath.minimum(np.core.umath.maximum(leds, 0.0, out=leds), 1.0, out=leds)
+                leds = (leds.take(chain.color_order, axis=1) * 255 + 0.5).ravel().astype(np.uint8)
+                leds = bytearray(leds)
 
                 if hasattr(chain,"prev_data"):
                     chain.prev_data = None # workaround to force update of dotstars
                 if not self.shutdown: 
-                    chain.led_helper.update_func(led_state, None)
+                    chain.led_helper.update_func(leds, None, True)
 
         if self.effects:
             next_eventtime=min(self.effects, key=lambda x: x.nextEventTime)\
@@ -884,13 +886,11 @@ class ledEffect:
             # pad to match effect LED length
             comet = np.append(comet, np.repeat(EMPTY_COLORS.reshape((1, 4)), remainder_length, axis=0), axis=0)
 
-            logging.info(comet)
             if self.direction: 
                 comet = np.flip(comet, axis=0)
             else: 
                 led_offset = max(0, len(comet) - self.ledCount)
                 comet = np.roll(comet, led_offset + remainder_length, axis=0)
-            logging.info(comet)
 
             shift = int(self.effectRate + (self.effectRate < 1)) * (1 if self.direction else -1)
             if self.effectRate == 0:
@@ -898,7 +898,6 @@ class ledEffect:
             else:                           
                 for i in range(len(comet)):
                     comet = np.roll(comet, shift, axis=0)
-                    logging.info(comet)
 
                     self.frames = np.append(self.frames,[comet[:self.ledCount]], axis=0)
 
