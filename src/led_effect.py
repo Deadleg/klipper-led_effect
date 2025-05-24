@@ -121,7 +121,7 @@ class ledFrameHandler:
                 for chain in self.ledChains:
                     if chain not in chains_shutdown:
                         chains_shutdown.add(chain)
-                        chain.led_helper.set_color(None, [0.0, 0.0, 0.0, 0.0])
+                        chain.led_helper._set_color(None, [0.0, 0.0, 0.0, 0.0])
                         #chain.led_helper.update_func(chain.led_helper.led_state, None)
     
     def _handle_homing_move_begin(self, hmove):
@@ -223,7 +223,7 @@ class ledFrameHandler:
             chains = effect.led_map
             for chain, start, end, subchain_start, subchain_end in chains:
                 updated_chain[chain] = True
-                updated_led_mask[chain][subchain_start:subchain_end] = np.zeros((subchain_end - subchain_start, 4))
+                updated_led_mask[chain][subchain_start:subchain_end] = 0
 
         for effect, (frame, update) in frames:
             fade_value = effect.fadeValue
@@ -232,9 +232,9 @@ class ledFrameHandler:
                 updated_led_mask[chain][subchain_start:subchain_end] += (frame[start: end] * fade_value)
 
         for chain, leds in updated_led_mask.items():
-            if updated_chain[chain] and not chain.mutex.is_locked:
+            if updated_chain[chain]: # and not chain.mutex.is_locked:
                 leds = np.core.umath.minimum(np.core.umath.maximum(leds, 0.0, out=leds), 1.0, out=leds)
-                leds = (leds.take(chain.color_order, axis=1) * 255 + 0.5).ravel().astype(np.uint8)
+                leds = (leds.take(chain.color_order, axis=1) * 255 + 0.5).ravel().astype(np.uint8).tolist()
                 leds = bytearray(leds)
 
                 if hasattr(chain,"prev_data"):
@@ -418,11 +418,11 @@ class ledEffect:
                     self.led_map.append((
                         ledChain,
                         len(self.leds), # start position on this effects frame
-                        len(self.leds) + ledChain.led_helper.get_led_count(), # end position on this effects frame
+                        len(self.leds) + ledChain.led_helper.led_count, # end position on this effects frame
                         0, # start led position in the chain
-                        ledChain.led_helper.get_led_count() # end led position in the chain
+                        ledChain.led_helper.led_count # end led position in the chain
                         ))
-                    for i in range(ledChain.led_helper.get_led_count()):
+                    for i in range(ledChain.led_helper.led_count):
                         self.leds.append((ledChain, int(i)))
                 else:
                     chain_sublength = len(ledIndices)
