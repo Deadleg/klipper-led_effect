@@ -236,6 +236,8 @@ class ledFrameHandler:
                 leds = np.core.umath.minimum(np.core.umath.maximum(leds, 0.0, out=leds), 1.0, out=leds)
                 leds = (leds.take(chain.color_order, axis=1) * 255 + 0.5).ravel().astype(np.uint8).tolist()
                 leds = bytearray(leds)
+            #if updated_chain[chain]:
+            #    led_state = bytearray(np.core.umath.minimum(np.core.umath.maximum(leds * 255, 0), 255))
 
                 if hasattr(chain,"prev_data"):
                     chain.prev_data = None # workaround to force update of dotstars
