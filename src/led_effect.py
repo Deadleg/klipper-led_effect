@@ -8,8 +8,7 @@
 
 from math import cos, exp, pi
 from random import randint
-from typing import List, Optional
-import logging
+from typing import Any, List, Optional, Tuple
 import numpy as np
 import numpy.typing as npt
 
@@ -78,8 +77,8 @@ class ledFrameHandler:
         self.printer.load_object(config, "display_status")
         self.heaters = {}
         self.printProgress = 0
-        self.effects = []
-        self.stepperPositions = [0.0,0.0,0.0]
+        self.effects : List[ledEffect] = []
+        self.stepperPositions = [0.0, 0.0, 0.0]
         self.stepperTimer     = None
         self.heaterCurrent   = {}
         self.heaterTarget    = {}
@@ -207,11 +206,11 @@ class ledFrameHandler:
     def _getColorData(self, colors, fade):
         return colors
 
+    @line_profiler.profile
     def _getFrames(self, eventtime):
         # Store results in local variable to prevent overhead of attribute lookups
         frames = [(effect, effect.getFrame(eventtime)) for effect in self.effects if not effect.lastUpdateApplied]
 
-        total_length = 0
         updated_led_mask = {}
         updated_chain = {}
 
@@ -219,17 +218,21 @@ class ledFrameHandler:
             updated_led_mask[chain] = np.array(chain.led_helper.led_state)
             updated_chain[chain] = False
 
-        for effect, (frame, update) in frames:
-            chains = effect.led_map
-            for chain, start, end, subchain_start, subchain_end in chains:
-                updated_chain[chain] = True
-                updated_led_mask[chain][subchain_start:subchain_end] = 0
+        #for effect, (frame, update) in frames:
+        #    chains = effect.led_map
+        #    for chain, start, end, subchain_start, subchain_end in chains:
+        #        updated_chain[chain] = True
+        #        updated_led_mask[chain][subchain_start:subchain_end] = 0
 
         for effect, (frame, update) in frames:
             fade_value = effect.fadeValue
             chains = effect.led_map
             for chain, start, end, subchain_start, subchain_end in chains:
-                updated_led_mask[chain][subchain_start:subchain_end] += (frame[start: end] * fade_value)
+                if not updated_chain[chain]:
+                    updated_led_mask[chain][subchain_start:subchain_end] = (frame[start: end] * fade_value)
+                    updated_chain[chain] = True
+                else:
+                    updated_led_mask[chain][subchain_start:subchain_end] += (frame[start: end] * fade_value)
 
         for chain, leds in updated_led_mask.items():
             if updated_chain[chain]: # and not chain.mutex.is_locked:
@@ -397,7 +400,7 @@ class ledEffect:
         self.ledChains    = []
         self.leds         = []
         self.enabled = self.autoStart
-        self.led_map = []
+        self.led_map : List[Tuple[Any, int, int, int, int]] = []
         if not self.enabled:
             self.nextEventTime = self.handler.reactor.NEVER
             self.lastUpdateApplied = True
@@ -439,7 +442,7 @@ class ledEffect:
                         self.leds.append((ledChain, led))
 
         self.ledCount = len(self.leds)
-        self.emptyFrame = np.zeros((self.ledCount,4))
+        self.emptyFrame = np.zeros((self.ledCount,4), dtype=np.float16)
         self.frame = self.emptyFrame
 
         #enumerate all effects from the subclasses of _layerBase...
@@ -449,6 +452,9 @@ class ledEffect:
                                    for c in self._layerBase.__subclasses__()
                                    if str(c).startswith("<class")}
         self._generateLayers()
+
+    def _pad_frame(self, frame: List[float]):
+        return frame + [0.0] * (COLORS - len(frame))
 
     def _generateLayers(self, context=None):
         self.layers = []
@@ -474,8 +480,8 @@ class ledEffect:
 
             layer = self.availableLayers[parms[0]]
 
-            pad = lambda x: x + [0.0] * (COLORS - len(x))
-            convert = lambda s: float(s)
+            #pad = lambda x: x + [0.0] * (COLORS - len(x))
+            #convert = lambda s: float(s)
                 
             try:
                 palette="".join(parms[4:])                                      # join all elements of the list
@@ -483,12 +489,12 @@ class ledEffect:
                 palette=palette.strip(",")
                 palette=palette.split("),(")                                    # split colors
                 palette=[c.split(",") for c in palette]                         # split color components
-                palette=[[convert(k.strip("()")) for k in c] for c in palette]  # convert to float
+                palette=[[float(k.strip("()")) for k in c] for c in palette]  # convert to float
                 for i in palette: 
                     if len(i) > COLORS: 
                         raise Exception(
                             "Color %s has too many elements." % (str(i),))
-                palette=[pad(c) for c in palette]                               # pad to COLORS colors
+                palette=[self._pad_frame(c) for c in palette]                               # pad to COLORS colors
                 palette=[k for c in palette for k in c]                         # flatten list
             except Exception as e:
                 raise self.printer.config_error(
@@ -506,7 +512,8 @@ class ledEffect:
 
         self.handler.addEffect(self)
 
-    def getFrame(self, eventtime) -> tuple[npt.NDArray[np.float16], bool]:
+    @line_profiler.profile
+    def getFrame(self, eventtime) -> tuple[Optional[npt.NDArray[np.float16]], bool]:
         """
         Returns
         -------
@@ -531,7 +538,7 @@ class ledEffect:
                 update = True
                 self.nextEventTime = eventtime + self.frameRate
 
-                frame: npt.NDArray[np.float16] = None
+                frame: Optional[npt.NDArray[np.float16]] = None
                 for layer in self.layers:
                     maybeFrame = layer.nextFrame(eventtime)
                     if maybeFrame is not None:
@@ -641,6 +648,7 @@ class ledEffect:
             if not frameCount:
                 self.thisFrame = [self.emptyFrame]
 
+        @line_profiler.profile
         def nextFrame(self, eventtime) -> Optional[npt.NDArray[np.float16]]:
             """
             Returns
@@ -968,9 +976,7 @@ class ledEffect:
             for i in range(gradientLength if self.effectRate != 0 else 1):
                 frame = np.zeros((self.ledCount, 4), np.float16)
                 for led in range(self.ledCount):
-                    frame[led] = gradient[ int(i*direction + \
-                        self.effectCutoff * gradientLength * led \
-                        / self.ledCount ) % gradientLength]
+                    frame[led] = gradient[int(i*direction + self.effectCutoff * gradientLength * led / self.ledCount ) % gradientLength]
                 self.frames = np.append(self.frames, [frame], axis=0)
 
             self.frameCount = len(self.frames)
