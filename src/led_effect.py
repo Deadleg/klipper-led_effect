@@ -206,7 +206,6 @@ class ledFrameHandler:
     def _getColorData(self, colors, fade):
         return colors
 
-    @line_profiler.profile
     def _getFrames(self, eventtime):
         # Store results in local variable to prevent overhead of attribute lookups
         frames = [(effect, effect.getFrame(eventtime)) for effect in self.effects if not effect.lastUpdateApplied]
@@ -512,7 +511,6 @@ class ledEffect:
 
         self.handler.addEffect(self)
 
-    @line_profiler.profile
     def getFrame(self, eventtime) -> tuple[Optional[npt.NDArray[np.float16]], bool]:
         """
         Returns
@@ -648,7 +646,6 @@ class ledEffect:
             if not frameCount:
                 self.thisFrame = [self.emptyFrame]
 
-        @line_profiler.profile
         def nextFrame(self, eventtime) -> Optional[npt.NDArray[np.float16]]:
             """
             Returns
