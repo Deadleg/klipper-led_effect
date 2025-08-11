@@ -217,12 +217,6 @@ class ledFrameHandler:
             updated_led_mask[chain] = np.array(chain.led_helper.led_state)
             updated_chain[chain] = False
 
-        #for effect, (frame, update) in frames:
-        #    chains = effect.led_map
-        #    for chain, start, end, subchain_start, subchain_end in chains:
-        #        updated_chain[chain] = True
-        #        updated_led_mask[chain][subchain_start:subchain_end] = 0
-
         for effect, (frame, update) in frames:
             fade_value = effect.fadeValue
             chains = effect.led_map
@@ -238,6 +232,7 @@ class ledFrameHandler:
                 leds = np.core.umath.minimum(np.core.umath.maximum(leds, 0.0, out=leds), 1.0, out=leds)
                 leds = (leds.take(chain.color_order, axis=1) * 255 + 0.5).ravel().astype(np.uint8).tolist()
                 leds = bytearray(leds)
+
             #if updated_chain[chain]:
             #    led_state = bytearray(np.core.umath.minimum(np.core.umath.maximum(leds * 255, 0), 255))
 
@@ -259,7 +254,7 @@ class ledFrameHandler:
         # run at least with 10Hz
         next_eventtime=min(next_eventtime, eventtime + 0.1) 
         return next_eventtime
-    
+
     def parse_chain(self, chain):
         chain = chain.strip()
         leds=[]
