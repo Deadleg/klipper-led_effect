@@ -1,0 +1,11 @@
+[package]
+name = "klipper_led_effect"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "string_sum"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = "0.25.1"

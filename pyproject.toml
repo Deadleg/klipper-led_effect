@@ -1,0 +1,22 @@
+[project]
+name = "klipper_led_effect"
+version = "0.1.0"
+description = ""
+authors = [{ name = "William Kerrigan", email = "deadleg@gmail.com" }]
+requires-python = "==3.12.1"
+readme = "README.md"
+dependencies = [
+    "ruff>=0.12.8,<0.13",
+    "numpy>=1.26.4,<2",
+    "py-spy>=0.4.0,<0.5",
+    "scalene>=1.5.51,<2",
+    "line-profiler>=4.2.0,<5",
+    "maturin>=1.9.3,<2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+#[tool.hatch.build.targets.wheel]
+#packages = ["src"]
