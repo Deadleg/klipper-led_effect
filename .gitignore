@@ -130,8 +130,3 @@ dmypy.json
 
 # VSCode
 .vscode
-
-
-# Added by cargo
-
-/target
